@@ -1729,6 +1729,158 @@ resource "azurerm_eventgrid_system_topic_event_subscription" "test" {
 `, data.RandomInteger, data.Locations.Primary)
 }
 
+func TestAccEventGridSystemTopicEventSubscription_MonitorAlertEndpoint(t *testing.T) {
+	data := acceptance.BuildTestData(t, "azurerm_eventgrid_system_topic_event_subscription", "testma") // Using "testma" for monitor alert
+	r := EventGridSystemTopicEventSubscriptionResource{}
+
+	// Define common resources and the monitor alert endpoint subscription
+	configBase := func(ri int, desc, sev string, agCount int) string {
+		agResources := ""
+		agIds := ""
+		for i := 1; i <= agCount; i++ {
+			agResources += fmt.Sprintf(`
+resource "azurerm_monitor_action_group" "testag%d" {
+  name                = "acctest-ag-%d-%d"
+  resource_group_name = azurerm_resource_group.test.name
+  short_name          = "ag%d%d"
+}
+`, i, ri, i, ri, i)
+			if i > 1 {
+				agIds += ", "
+			}
+			agIds += fmt.Sprintf("azurerm_monitor_action_group.testag%d.id", i)
+		}
+
+		return fmt.Sprintf(`
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-egma-%d"
+  location = "%s"
+}
+
+resource "azurerm_eventgrid_system_topic" "test" {
+  name                   = "acctestegstma-%d"
+  location               = "Global"
+  resource_group_name    = azurerm_resource_group.test.name
+  source_arm_resource_id = azurerm_resource_group.test.id
+  topic_type             = "Microsoft.Resources.ResourceGroups"
+}
+
+%s // Action Group resources
+
+resource "azurerm_eventgrid_system_topic_event_subscription" "testma" {
+  name                = "acctestegstesma-%d"
+  system_topic        = azurerm_eventgrid_system_topic.test.name
+  resource_group_name = azurerm_resource_group.test.name
+
+  monitor_alert_endpoint {
+    description = "%s"
+    severity    = "%s"
+    action_group_ids = [%s]
+  }
+}
+`, ri, data.Locations.Primary, ri, agResources, ri, desc, sev, agIds)
+	}
+
+	// Config for create
+	configCreate := configBase(data.RandomInteger, "Initial Description", "Sev1", 1)
+	// Config for update (description, severity, and action groups change)
+	configUpdate := configBase(data.RandomInteger, "Updated Description", "Sev2", 2) // Re-uses data.RandomInteger for RG and Topic name for simplicity in test, ensure AGs are new
+
+	// Config for conflict test
+	// Note: For conflict, we use a different random integer to avoid clashes if run in parallel or if cleanup fails.
+	// We also need a webhook_endpoint compatible resource like storage account for the other endpoint.
+	rgNameConflict := fmt.Sprintf("acctestRG-egmaconflict-%d", data.RandomInteger+100) // Ensure different RG name
+	saNameConflict := fmt.Sprintf("acctestsaegmaconflict%s", utils.RandomString(10))
+
+	configConflict := fmt.Sprintf(`
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "%s"
+  location = "%s"
+}
+
+resource "azurerm_eventgrid_system_topic" "test" {
+  name                   = "acctestegstmaconflict-%d"
+  location               = "Global"
+  resource_group_name    = azurerm_resource_group.test.name
+  source_arm_resource_id = azurerm_resource_group.test.id
+  topic_type             = "Microsoft.Resources.ResourceGroups"
+}
+
+resource "azurerm_monitor_action_group" "testag_conflict" {
+  name                = "acctest-ag-conflict-%d"
+  resource_group_name = azurerm_resource_group.test.name
+  short_name          = "agconf%d"
+}
+
+resource "azurerm_storage_account" "sa_conflict" {
+  name                     = "%s"
+  resource_group_name      = azurerm_resource_group.test.name
+  location                 = azurerm_resource_group.test.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_storage_queue" "q_conflict" {
+  name                 = "qconflict-%d"
+  storage_account_name = azurerm_storage_account.sa_conflict.name
+}
+
+resource "azurerm_eventgrid_system_topic_event_subscription" "testma_conflict" {
+  name                = "acctestegstesmaconflict-%d"
+  system_topic        = azurerm_eventgrid_system_topic.test.name
+  resource_group_name = azurerm_resource_group.test.name
+
+  monitor_alert_endpoint {
+    description      = "Conflict Test"
+    severity         = "Sev3"
+    action_group_ids = [azurerm_monitor_action_group.testag_conflict.id]
+  }
+
+  storage_queue_endpoint {
+    storage_account_id = azurerm_storage_account.sa_conflict.id
+    queue_name         = azurerm_storage_queue.q_conflict.name
+  }
+}
+`, rgNameConflict, data.Locations.Primary, data.RandomInteger, data.RandomInteger, data.RandomInteger, saNameConflict, data.RandomInteger, data.RandomInteger)
+
+	data.ResourceTest(t, r, []acceptance.TestStep{
+		{
+			Config: configCreate,
+			Check: acceptance.ComposeTestCheckFunc(
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").ExistsInAzure(r),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.#").HasValue("1"),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.0.description").HasValue("Initial Description"),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.0.severity").HasValue("Sev1"),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.0.action_groups.#").HasValue("1"),
+				// More specific check for action group ID could be added if needed, e.g. by checking against known output of azurerm_monitor_action_group.testag1.id
+			),
+		},
+		data.ImportStep("azurerm_eventgrid_system_topic_event_subscription.testma"),
+		{
+			Config: configUpdate,
+			Check: acceptance.ComposeTestCheckFunc(
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").ExistsInAzure(r),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.#").HasValue("1"),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.0.description").HasValue("Updated Description"),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.0.severity").HasValue("Sev2"),
+				check.That("azurerm_eventgrid_system_topic_event_subscription.testma").Key("monitor_alert_endpoint.0.action_groups.#").HasValue("2"),
+			),
+		},
+		{
+			Config:      configConflict,
+			ExpectError: acceptance.ExpectedErrorR("Only one endpoint can be specified for an Event Grid Subscription"), // Adjust regex based on actual error
+		},
+	})
+}
+
 func (EventGridSystemTopicEventSubscriptionResource) deliveryPropertiesForHybridRelay(data acceptance.TestData) string {
 	return fmt.Sprintf(`
 provider "azurerm" {
