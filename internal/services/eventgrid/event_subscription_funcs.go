@@ -46,7 +46,39 @@ func expandEventSubscriptionDestination(d *pluginsdk.ResourceData) eventsubscrip
 		return expandEventGridEventSubscriptionWebhookEndpoint(val.([]interface{}), deliveryMappings)
 	}
 
+	if val, ok := d.GetOk(string(MonitorAlertEndpoint)); ok && len(val.([]interface{})) > 0 {
+		return expandEventSubscriptionDestinationMonitorAlert(val.([]interface{}))
+	}
+
 	return nil
+}
+
+func expandEventSubscriptionDestinationMonitorAlert(input []interface{}) eventsubscriptions.EventSubscriptionDestination {
+	dest := eventsubscriptions.MonitorAlertEventSubscriptionDestination{
+		EndpointType: eventsubscriptions.EndpointTypeMonitorAlert,
+	}
+
+	if len(input) == 0 || input[0] == nil {
+		return dest
+	}
+
+	config := input[0].(map[string]interface{})
+	props := eventsubscriptions.MonitorAlertEventSubscriptionDestinationProperties{}
+
+	if v, ok := config["description"].(string); ok && v != "" {
+		props.Description = pointer.To(v)
+	}
+
+	if v, ok := config["severity"].(string); ok && v != "" {
+		props.Severity = eventsubscriptions.MonitorAlertSeverity(v)
+	}
+
+	if v, ok := config["action_groups"].([]interface{}); ok && len(v) > 0 {
+		props.ActionGroupIDs = utils.ExpandStringSlice(v)
+	}
+
+	dest.Properties = &props
+	return dest
 }
 
 func expandEventGridEventSubscriptionWebhookEndpoint(input []interface{}, deliveryMappings []eventsubscriptions.DeliveryAttributeMapping) eventsubscriptions.EventSubscriptionDestination {
@@ -117,6 +149,33 @@ func flattenEventSubscriptionDestinationAzureFunction(input eventsubscriptions.E
 			"max_events_per_batch":              int(pointer.From(props.MaxEventsPerBatch)),
 			"preferred_batch_size_in_kilobytes": int(pointer.From(props.PreferredBatchSizeInKilobytes)),
 		})
+	}
+
+	return output
+}
+
+func flattenEventSubscriptionDestinationMonitorAlert(input eventsubscriptions.EventSubscriptionDestination) []interface{} {
+	output := make([]interface{}, 0)
+
+	val, ok := input.(eventsubscriptions.MonitorAlertEventSubscriptionDestination)
+	if ok && val.Properties != nil {
+		data := map[string]interface{}{}
+
+		if val.Properties.Description != nil {
+			data["description"] = *val.Properties.Description
+		} else {
+			data["description"] = ""
+		}
+
+		data["severity"] = string(val.Properties.Severity) // Severity is not a pointer and will have a value or be empty string if not set by API
+
+		if val.Properties.ActionGroupIDs != nil {
+			data["action_groups"] = utils.FlattenStringSlice(val.Properties.ActionGroupIDs)
+		} else {
+			data["action_groups"] = make([]interface{}, 0)
+		}
+
+		output = append(output, data)
 	}
 
 	return output

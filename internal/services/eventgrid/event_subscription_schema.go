@@ -244,6 +244,38 @@ func eventSubscriptionSchemaWebHookEndpoint(conflictsWith []string) *pluginsdk.S
 	}
 }
 
+func eventSubscriptionSchemaMonitorAlertEndpoint(conflictsWith []string) *pluginsdk.Schema {
+	return &pluginsdk.Schema{
+		Type:          pluginsdk.TypeList,
+		MaxItems:      1,
+		Optional:      true,
+		ConflictsWith: conflictsWith,
+		Elem: &pluginsdk.Resource{
+			Schema: map[string]*pluginsdk.Schema{
+				"description": {
+					Type:     pluginsdk.TypeString,
+					Optional: true,
+				},
+				"severity": {
+					Type:     pluginsdk.TypeString,
+					Optional: true,
+					ValidateFunc: validation.StringInSlice([]string{
+						"Sev0", "Sev1", "Sev2", "Sev3", "Sev4",
+					}, false),
+				},
+				"action_groups": {
+					Type:     pluginsdk.TypeList,
+					Optional: true,
+					Elem: &pluginsdk.Schema{
+						Type:         pluginsdk.TypeString,
+						ValidateFunc: azure.ValidateResourceID, // Assuming action group IDs are Azure Resource IDs
+					},
+				},
+			},
+		},
+	}
+}
+
 func eventSubscriptionSchemaIncludedEventTypes() *pluginsdk.Schema {
 	return &pluginsdk.Schema{
 		Type:     pluginsdk.TypeList,

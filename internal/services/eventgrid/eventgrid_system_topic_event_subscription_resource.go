@@ -29,6 +29,7 @@ func possibleSystemTopicEventSubscriptionEndpointTypes() []string {
 		string(ServiceBusTopicEndpointID),
 		string(StorageQueueEndpoint),
 		string(WebHookEndpoint),
+		string(MonitorAlertEndpoint),
 	}
 }
 
@@ -88,6 +89,13 @@ func resourceEventGridSystemTopicEventSubscription() *pluginsdk.Resource {
 				utils.RemoveFromStringArray(
 					possibleSystemTopicEventSubscriptionEndpointTypes(),
 					string(HybridConnectionEndpointID),
+				),
+			),
+
+			"monitor_alert_endpoint": eventSubscriptionSchemaMonitorAlertEndpoint(
+				utils.RemoveFromStringArray(
+					possibleSystemTopicEventSubscriptionEndpointTypes(),
+					string(MonitorAlertEndpoint),
 				),
 			),
 
